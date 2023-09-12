@@ -49,11 +49,9 @@ func (p *Runtime) Start() {
 
 	for i, proc := range p.procs {
 		if proc == nil || proc.IsExited() {
-			proc, err := createProcess(p.exe, p.args...)
-			if err != nil {
-				panic(err)
+			if proc, err := createProcess(p.exe, p.args...); err == nil {
+				p.procs[i] = proc
 			}
-			p.procs[i] = proc
 		}
 	}
 }

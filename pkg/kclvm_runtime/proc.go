@@ -4,11 +4,12 @@ package kclvm_runtime
 
 import (
 	"bytes"
+	"errors"
 	"io"
 	"net/rpc"
 	"os/exec"
 
-	"github.com/powerman/rpc-codec/jsonrpc2"
+	"github.com/chai2010/protorpc"
 )
 
 type _Process struct {
@@ -55,7 +56,7 @@ func createProcess(exe string, arg ...string) (p *_Process, err error) {
 
 	// NewXxxServiceClient 会独占 信道(只能选择1个), 多个客户端需要手工构建 client
 	conn := &procReadWriteCloser{proc: p, r: p.stdout, w: p.stdin}
-	p.c = rpc.NewClientWithCodec(jsonrpc2.NewClientCodec(conn))
+	p.c = rpc.NewClientWithCodec(protorpc.NewClientCodec(conn))
 
 	return p, nil
 }
@@ -105,22 +106,15 @@ func newLimitBuffer(cap int) *limitBuffer {
 	return &limitBuffer{cap: cap}
 }
 
-func (b *limitBuffer) Write(p []byte) (int, error) {
-	n := b.cap - b.buf.Len()
+func (b *limitBuffer) Write(p []byte) (n int, err error) {
+	n = b.cap - b.buf.Len()
 	if n > 0 {
-		if n > len(p) {
-			n = len(p)
-		}
-		var err error
-		n, err = b.buf.Write(p[:n])
-		if err != nil {
-			return n, err
-		}
+		b.buf.Write(p[:n])
 	}
 	if n < len(p) {
-		return n, io.ErrShortWrite
+		err = errors.New("limitBuffer: overflow")
 	}
-	return n, nil
+	return n, err
 }
 
 func (b *limitBuffer) Read(p []byte) (n int, err error) {

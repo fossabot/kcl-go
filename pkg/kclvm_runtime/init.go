@@ -7,19 +7,18 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 
 	"kcl-lang.io/kcl-go/pkg/spec/gpyrpc"
 )
 
 var (
-	Debug              bool
-	rpcRuntime         *Runtime
-	once               sync.Once
-	UseKCLPluginEnvVar = "KCL_GO_USE_PLUGIN"
+	Debug        bool
+	pyrpcRuntime *Runtime
+	gorpcRuntime *Runtime
+	once         sync.Once
 )
-
-const tip = "Tip: Have you used a binary version of KCL in your PATH that is not consistent with the KCL Go SDK? You can upgrade or reduce the KCL version or delete the KCL in your PATH"
 
 func InitRuntime(maxProc int) {
 	once.Do(func() { initRuntime(maxProc) })
@@ -27,12 +26,21 @@ func InitRuntime(maxProc int) {
 
 func GetRuntime() *Runtime {
 	once.Do(func() { initRuntime(0) })
-	return rpcRuntime
+	if strings.EqualFold(os.Getenv("KCLVM_SERVICE_CLIENT_HANDLER"), "native") {
+		return gorpcRuntime
+	} else {
+		return pyrpcRuntime
+	}
+}
+
+func GetGoRuntime() *Runtime {
+	once.Do(func() { initRuntime(0) })
+	return gorpcRuntime
 }
 
 func GetPyRuntime() *Runtime {
 	once.Do(func() { initRuntime(0) })
-	return rpcRuntime
+	return pyrpcRuntime
 }
 
 func initRuntime(maxProc int) {
@@ -43,32 +51,41 @@ func initRuntime(maxProc int) {
 		maxProc = runtime.NumCPU() * 2
 	}
 
+	if g_Python3Path == "" {
+		panic(ErrPython3NotFound)
+	}
 	if g_KclvmRoot == "" {
 		panic(ErrKclvmRootNotFound)
 	}
 
-	if os.Getenv(UseKCLPluginEnvVar) != "" {
+	if strings.HasSuffix(g_Python3Path, "kclvm") || strings.HasSuffix(g_Python3Path, "kclvm.exe") {
+		os.Setenv("PYTHONHOME", "")
+		os.Setenv("PYTHONPATH", "")
+	} else {
 		os.Setenv("PYTHONHOME", "")
 		os.Setenv("PYTHONPATH", filepath.Join(g_KclvmRoot, "lib", "site-packages"))
-		rpcRuntime = NewRuntime(int(maxProc), MustGetKclvmPath(), "-m", "kclvm.program.rpc-server")
-	} else {
-		rpcRuntime = NewRuntime(int(maxProc), "kclvm_cli", "server")
 	}
-
-	rpcRuntime.Start()
+	//todo add kclvm_capi gorpc server
+	pyrpcRuntime = NewRuntime(int(maxProc), MustGetKclvmPath(), "-m", "kclvm.program.rpc-server")
+	pyrpcRuntime.Start()
 
 	client := &BuiltinServiceClient{
-		Runtime: rpcRuntime,
+		Runtime: pyrpcRuntime,
 	}
 
 	// ping
 	{
 		args := &gpyrpc.Ping_Args{Value: "ping: kcl-go rest-server"}
 		resp, err := client.Ping(args)
-		if err != nil || resp.Value != args.Value {
-			fmt.Println("Init kcl runtime failed, path: ", MustGetKclvmPath())
-			fmt.Println(tip)
+		if err != nil {
+			fmt.Println("KclvmRuntime: ping failed")
+			fmt.Println("kclvm path:", MustGetKclvmPath())
 			panic(err)
+		}
+		if resp.Value != args.Value {
+			fmt.Println("KclvmRuntime: ping failed, resp =", resp)
+			fmt.Println("kclvm path:", MustGetKclvmPath())
+			panic("ping failed")
 		}
 	}
 }

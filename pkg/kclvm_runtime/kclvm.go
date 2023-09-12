@@ -3,66 +3,37 @@
 package kclvm_runtime
 
 import (
-	"context"
 	_ "embed"
 	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"time"
-
-	"github.com/gofrs/flock"
-	artifact "kcl-lang.io/kcl-artifact-go"
-	"kcl-lang.io/kcl-go/pkg/logger"
-	"kcl-lang.io/kcl-go/pkg/path"
 )
-
-const (
-	DisableArtifactEnvVar = "KCL_GO_DISABLE_ARTIFACT"
-)
-
-func init() {
-	if os.Getenv(DisableArtifactEnvVar) == "" && os.Getenv(UseKCLPluginEnvVar) == "" {
-		installKclArtifact()
-	}
-	g_KclvmRoot = findKclvmRoot()
-}
-
-func installKclArtifact() {
-	// Get the install lib path.
-	path := path.LibPath()
-	err := os.MkdirAll(path, 0777)
-	if err != nil {
-		logger.GetLogger().Warningf("install kclvm failed: %s", err.Error())
-	}
-	// Acquire a file lock for process synchronization
-	lockPath := filepath.Join(path, "init.lock")
-	fileLock := flock.New(lockPath)
-	lockCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	locked, err := fileLock.TryLockContext(lockCtx, time.Second)
-	if err == nil && locked {
-		defer fileLock.Unlock()
-	}
-	if err != nil {
-		logger.GetLogger().Warningf("install kclvm failed: %s", err.Error())
-	}
-	// Install lib
-	err = artifact.InstallKclvm(path)
-	if err != nil {
-		logger.GetLogger().Warningf("install kclvm failed: %s", err.Error())
-	}
-	artifact.CleanInstall()
-}
 
 var (
-	g_KclvmRoot          string
-	ErrKclvmRootNotFound = errors.New("kclvm root not found, please ensure kcl is in your PATH")
+	g_Python3Path = findPython3Path()
+	g_KclvmRoot   = findKclvmRoot()
+)
+
+var (
+	ErrPython3NotFound   = errors.New("python3 not found")
+	ErrKclvmRootNotFound = errors.New("kclvm root not found")
 )
 
 func InitKclvmRoot(kclvmRoot string) {
 	g_KclvmRoot = kclvmRoot
+	if runtime.GOOS == "windows" {
+		s := filepath.Join(g_KclvmRoot, "kclvm.exe")
+		if fi, _ := os.Lstat(s); fi != nil && !fi.IsDir() {
+			g_Python3Path = s
+		}
+	} else {
+		s := filepath.Join(g_KclvmRoot, "bin", "kclvm")
+		if fi, _ := os.Lstat(s); fi != nil && !fi.IsDir() {
+			g_Python3Path = s
+		}
+	}
 }
 
 // GetKclvmRoot return kclvm root directory, return error if kclvm not found.
@@ -84,10 +55,13 @@ func MustGetKclvmRoot() string {
 
 // GetKclvmPath return kclvm/python3 executable path, return error if not found.
 func GetKclvmPath() (string, error) {
+	if g_Python3Path == "" {
+		return "", ErrPython3NotFound
+	}
 	if g_KclvmRoot == "" {
 		return "", ErrKclvmRootNotFound
 	}
-	return g_KclvmRoot, nil
+	return g_Python3Path, nil
 }
 
 // MustGetKclvmPath return kclvm/python3 executable path, panic if not found.
@@ -97,6 +71,19 @@ func MustGetKclvmPath() string {
 		panic(err)
 	}
 	return s
+}
+
+func findPython3Path() string {
+	for _, s := range []string{"kclvm", "python3"} {
+		exeName := s
+		if runtime.GOOS == "windows" {
+			exeName += ".exe"
+		}
+		if path, err := exec.LookPath(exeName); err == nil {
+			return path
+		}
+	}
+	return ""
 }
 
 func findKclvmRoot() string {
